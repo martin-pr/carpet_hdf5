@@ -37,10 +37,43 @@ namespace {
 		}
 	}
 
+	template<typename T>
+	void printArray(const H5::Attribute& attr) {
+		const unsigned count = attr.getInMemDataSize() / sizeof(T);
+		T values[count];
+		DataType type = attr.getDataType();
+		attr.read(type, (void*)values);
+
+		for(unsigned a=0;a<count;++a)
+			cout << values[a] << "  ";
+	}
+
+	void printString(const H5::Attribute& attr) {
+		DataType type = attr.getDataType();
+		std::string value;
+		attr.read(type, value);
+
+		cout << value;
+	}
+
 	void printAttributes(const H5::H5Location& location, const std::string& prefix) {
 		for(int aid = 0; aid < location.getNumAttrs(); ++aid) {
 			H5::Attribute attr = location.openAttribute(aid);
-			cout << prefix << attr.getName() << endl;
+
+			std::string value;
+			attr.read(attr.getDataType(), value);
+
+			cout << prefix << attr.getName() << " (" << translateClass(attr.getDataType().getClass()) << ", " << attr.getInMemDataSize() << ")  =  ";
+
+			if(attr.getDataType().getClass() == H5T_INTEGER)
+				printArray<int>(attr);
+			else if(attr.getDataType().getClass() == H5T_FLOAT)
+				printArray<double>(attr);
+			else if(attr.getDataType().getClass() == H5T_STRING)
+				printString(attr);
+			else
+				cout << "(print not implemented)";
+			cout << endl;
 		}
 	}
 
