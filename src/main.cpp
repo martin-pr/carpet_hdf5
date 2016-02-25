@@ -77,7 +77,7 @@ namespace {
 		}
 	}
 
-	void printDataset(const H5::DataSet& dataset, const std::string& prefix) {
+	void printDataset(const H5::DataSet& dataset, const std::string& prefix = "") {
 		DataSpace space = dataset.getSpace();
 		
 		cout << prefix << "type: " << translateClass(dataset.getTypeClass()) << endl;
@@ -121,6 +121,34 @@ namespace {
 				printDataset(group.openDataSet(group.getObjnameByIdx(i)), prefix + SPACING);
 		}
 	}
+
+	///////////////
+
+	template<typename T>
+	void printDatasetValues(const H5::DataSet& ds) {
+		const unsigned count = ds.getInMemDataSize() / sizeof(T);
+		T values[count];
+		DataType type = ds.getDataType();
+		ds.read((void*)values, type);
+
+		for(unsigned a=0;a<count;++a)
+			cout << values[a] << "  ";
+	}
+
+	void printDatasetContent(const H5File& file, const std::string datasetName) {
+		H5::DataSet ds = file.openDataSet(datasetName);
+		printDataset(ds);
+
+		cout << endl;
+
+		if(ds.getDataType().getClass() == H5T_INTEGER)
+			printDatasetValues<int>(ds);
+		else if(ds.getDataType().getClass() == H5T_FLOAT)
+			printDatasetValues<double>(ds);
+		else
+			cout << "(print not implemented)";
+		cout << endl;
+	}
 }
 
 int main(int argc, char* argv[]) {
@@ -129,6 +157,7 @@ int main(int argc, char* argv[]) {
 	desc.add_options()
 		("help", "produce help message")
 		("input", po::value<std::string>(), "input hdf5 file")
+		("dataset", po::value<std::string>(), "read a particular dataset (optional)")
 	;
 
 	// process the options
@@ -143,7 +172,10 @@ int main(int argc, char* argv[]) {
 
 	H5File file(vm["input"].as<std::string>().c_str(), H5F_ACC_RDONLY );
 
-	printContent(file);
+	if(!vm.count("dataset"))
+		printContent(file);
+	else
+		printDatasetContent(file, vm["dataset"].as<std::string>());
 
 	return 0;
 }
