@@ -6,5 +6,5 @@ fi
 
 cd bin
 cmake ..
-make -j 12
+make -j 12 || exit 1
 cd ..
