@@ -9,6 +9,8 @@
 #include <H5Location.h>
 #include <H5File.h>
 
+#include <openvdb.h>
+
 using namespace H5;
 
 namespace po = boost::program_options;
@@ -149,6 +151,48 @@ namespace {
 			cout << "(print not implemented)";
 		cout << endl;
 	}
+
+	void writevdb(const H5File& file, const std::string datasetName, const std::string& filename) {
+		H5::DataSet ds = file.openDataSet(datasetName);
+		if(ds.getDataType().getClass() != H5T_FLOAT)
+			throw std::runtime_error("OpenVDB output only supports float grids");
+
+		H5::DataSpace space = ds.getSpace();
+		if(space.getSimpleExtentNdims() != 3)
+			throw std::runtime_error("OpenVDB output only supports 3D grids");
+
+		space.selectAll();
+
+		hsize_t start[3];
+		hsize_t end[3];
+		space.getSelectBounds(start, end);
+
+		const unsigned count = ds.getInMemDataSize() / sizeof(double);
+		double values[count];
+		DataType type = ds.getDataType();
+		ds.read((void*)values, type);
+
+		openvdb::initialize();
+		openvdb::FloatGrid::Ptr grid = openvdb::FloatGrid::create();
+		openvdb::FloatGrid::Accessor accessor = grid->getAccessor();
+
+		double* ptr = values;
+		for(hsize_t x = start[0]; x <= end[0]; ++x)
+			for(hsize_t y = start[1]; y <= end[1]; ++y)
+				for(hsize_t z = start[2]; z <= end[2]; ++z) {
+					openvdb::Coord xyz(x, y, z);
+					accessor.setValue(xyz, *(ptr++));
+				}
+
+		// Create a VDB file object.
+		openvdb::io::File out(filename.c_str());
+		// Add the grid pointer to a container.
+		openvdb::GridPtrVec grids;
+		grids.push_back(grid);
+		// Write out the contents of the container.
+		out.write(grids);
+		out.close();		
+	}
 }
 
 int main(int argc, char* argv[]) {
@@ -158,6 +202,7 @@ int main(int argc, char* argv[]) {
 		("help", "produce help message")
 		("input", po::value<std::string>(), "input hdf5 file")
 		("dataset", po::value<std::string>(), "read a particular dataset (optional)")
+		("writevdb", po::value<std::string>(), "write a dataset selected by --dataset parameter into an openvdb file")
 	;
 
 	// process the options
@@ -170,12 +215,19 @@ int main(int argc, char* argv[]) {
 		return 1;
 	}
 
+	if(vm.count("writevdb") && !vm.count("dataset")) {
+		cout << "--writevdb parameter used, but no --dataset specified!" << endl;
+		return 1;
+	}
+
 	H5File file(vm["input"].as<std::string>().c_str(), H5F_ACC_RDONLY );
 
 	if(!vm.count("dataset"))
 		printContent(file);
-	else
+	else if(!vm.count("writevdb"))
 		printDatasetContent(file, vm["dataset"].as<std::string>());
+	else
+		writevdb(file, vm["dataset"].as<std::string>(), vm["writevdb"].as<std::string>());
 
 	return 0;
 }

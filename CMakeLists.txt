@@ -52,8 +52,21 @@ endif (HDF5_INCLUDE_DIR AND HDF5_LIBRARY AND HDF5_CPP_LIBRARY)
 include_directories(${HDF5_INCLUDE_DIR})
 set(LIBS ${LIBS} ${HDF5_LIBRARY} ${HDF5_CPP_LIBRARY})
 
+# looking for openvdb libs
+SET(OPENVDB_LIBRARY_PATHS /usr/lib /usr/local/lib /sw/lib /opt/local/lib /usr/lib/x86_64-linux-gnu)
+FIND_PATH(OPENVDB_INCLUDE_DIR openvdb.h /usr/include/openvdb /usr/local/include/openvdb /sw/include /opt/local/include)
+FIND_LIBRARY(OPENVDB_LIBRARY NAMES openvdb PATHS ${OPENVDB_LIBRARY_PATHS})
+if (OPENVDB_INCLUDE_DIR AND OPENVDB_LIBRARY)
+  set (OPENVDB_FOUND TRUE)
+  message (STATUS "OPENVDB library found (${OPENVDB_INCLUDE_DIR}, ${OPENVDB_LIBRARY}).")
+else (OPENVDB_INCLUDE_DIR AND OPENVDB_LIBRARY)
+  message (FATAL_ERROR "OPENVDB library not found (${OPENVDB_INCLUDE_DIR}, ${OPENVDB_LIBRARY}).")
+endif (OPENVDB_INCLUDE_DIR AND OPENVDB_LIBRARY)
+include_directories(${OPENVDB_INCLUDE_DIR})
+set(LIBS ${LIBS} ${OPENVDB_LIBRARY} ${OPENVDB_CPP_LIBRARY})
+
 # blindly adding tbb
-# set(LIBS ${LIBS} tbb)
+set(LIBS ${LIBS} tbb)
 
 ###########################################################
 # BUILD
