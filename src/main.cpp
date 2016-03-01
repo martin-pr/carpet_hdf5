@@ -152,7 +152,7 @@ namespace {
 		cout << endl;
 	}
 
-	void writevdb(const H5File& file, const std::string datasetName, const std::string& filename) {
+	void writevdb(const H5File& file, const std::string datasetName, const std::string& filename, bool normalize, float offset) {
 		H5::DataSet ds = file.openDataSet(datasetName);
 		if(ds.getDataType().getClass() != H5T_FLOAT)
 			throw std::runtime_error("OpenVDB output only supports float grids");
@@ -183,12 +183,30 @@ namespace {
 		DataType type = ds.getDataType();
 		ds.read((void*)values, type);
 
+		// normalize the values
+		if(normalize) {
+			float min = values[0];
+			float max = values[0];
+			for(unsigned a=0;a<count;++a) {
+				min = std::min(values[a], min);
+				max = std::max(values[a], max);
+			}
 
+			for(unsigned a=0;a<count;++a)
+				values[a] = (values[a] - min) / (max - min) + offset;
+		}
+		else if(offset != 0.0f)
+			for(unsigned a=0;a<count;++a)
+				values[a] += offset;
+
+		// initialise the openvdb (only once)
 		static bool vdbInitialised = false;
 		if(!vdbInitialised) {
 			openvdb::initialize();
 			vdbInitialised = true;
 		}
+
+		// and write the grid
 		openvdb::FloatGrid::Ptr grid = openvdb::FloatGrid::create();
 		openvdb::FloatGrid::Accessor accessor = grid->getAccessor();
 
@@ -224,6 +242,8 @@ int main(int argc, char* argv[]) {
 		("dataset", po::value<std::string>(), "read a particular dataset (optional)")
 		("writevdb", po::value<std::string>(), "write a dataset selected by --dataset parameter into an openvdb file")
 		("writevdb_all", po::value<std::string>(), "write each datasets into an openvdb file in specified directory")
+		("normalize", "normalize the output to be between 0 and 1")
+		("offset", po::value<float>()->default_value(0.0f), "offset the data by a given amount")
 	;
 
 	// process the options
@@ -249,16 +269,15 @@ int main(int argc, char* argv[]) {
 			auto typeId = file.getObjTypeByIdx(i, type);
 
 			if(typeId == H5G_DATASET)
-				writevdb(file, file.getObjnameByIdx(i), file.getObjnameByIdx(i) + std::string(".vdb"));
+				writevdb(file, file.getObjnameByIdx(i), file.getObjnameByIdx(i) + std::string(".vdb"), vm.count("normalize"), vm["offset"].as<float>());
 		}
 	}
 	else if(vm.count("dataset") && vm.count("writevdb"))
-		writevdb(file, vm["dataset"].as<std::string>(), vm["writevdb"].as<std::string>());
+		writevdb(file, vm["dataset"].as<std::string>(), vm["writevdb"].as<std::string>(), vm.count("normalize"), vm["offset"].as<float>());
 	else if(!vm.count("dataset"))
 		printContent(file);
 	else if(!vm.count("writevdb"))
 		printDatasetContent(file, vm["dataset"].as<std::string>());
-		writevdb(file, vm["dataset"].as<std::string>(), vm["writevdb"].as<std::string>());
 
 	return 0;
 }
