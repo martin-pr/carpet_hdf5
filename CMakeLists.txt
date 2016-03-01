@@ -41,7 +41,7 @@ set(LIBS ${LIBS} ${OPENEXR_HALF_LIBRARY} ${OPENEXR_IEX_LIBRARY})
 # looking for hdf5 libs
 SET(HDF5_LIBRARY_PATHS /usr/lib /usr/local/lib /sw/lib /opt/local/lib /usr/lib/x86_64-linux-gnu /usr/local/HDF_Group/HDF5/1.8.16/lib)
 FIND_PATH(HDF5_INCLUDE_DIR hdf5.h /usr/include/hdf5/serial /usr/local/include/hdf5/serial /sw/include /opt/local/include /usr/local/HDF_Group/HDF5/1.8.16/include)
-FIND_LIBRARY(HDF5_LIBRARY NAMES hdf5 hdf5-shared PATHS ${HDF5_LIBRARY_PATHS})
+FIND_LIBRARY(HDF5_LIBRARY NAMES hdf5 hdf5-shared hdf5_serial PATHS ${HDF5_LIBRARY_PATHS})
 FIND_LIBRARY(HDF5_CPP_LIBRARY NAMES hdf5_cpp hdf5_cpp-shared PATHS ${HDF5_LIBRARY_PATHS})
 if (HDF5_INCLUDE_DIR AND HDF5_LIBRARY AND HDF5_CPP_LIBRARY)
   set (HDF5_FOUND TRUE)

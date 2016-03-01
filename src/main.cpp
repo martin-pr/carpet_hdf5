@@ -167,22 +167,40 @@ namespace {
 		hsize_t end[3];
 		space.getSelectBounds(start, end);
 
-		const unsigned count = ds.getInMemDataSize() / sizeof(double);
-		double values[count];
+		const unsigned count = ds.getInMemDataSize() / sizeof(float);
+		const unsigned computedSize = (end[0] - start[0] + 1) * (end[1] - start[1] + 1) * (end[2] - start[2] + 1);
+
+		if(count == 0)
+			throw std::runtime_error("Empty grid cannot be used!");
+
+		if(count != computedSize) {
+			std::stringstream err;
+			err << "Something wrong with the data count - getInMemDataSize gives " << count << "elements, while the computed size is " << computedSize << " elements.";
+			throw std::runtime_error(err.str());
+		}
+
+		float values[count];
 		DataType type = ds.getDataType();
 		ds.read((void*)values, type);
 
-		openvdb::initialize();
+
+		static bool vdbInitialised = false;
+		if(!vdbInitialised) {
+			openvdb::initialize();
+			vdbInitialised = true;
+		}
 		openvdb::FloatGrid::Ptr grid = openvdb::FloatGrid::create();
 		openvdb::FloatGrid::Accessor accessor = grid->getAccessor();
 
-		double* ptr = values;
+		float* ptr = values;
 		for(hsize_t x = start[0]; x <= end[0]; ++x)
 			for(hsize_t y = start[1]; y <= end[1]; ++y)
 				for(hsize_t z = start[2]; z <= end[2]; ++z) {
 					openvdb::Coord xyz(x, y, z);
 					accessor.setValue(xyz, *(ptr++));
 				}
+
+		cout << "Writing VDB to " << filename << "..." << endl;
 
 		// Create a VDB file object.
 		openvdb::io::File out(filename.c_str());
@@ -192,6 +210,8 @@ namespace {
 		// Write out the contents of the container.
 		out.write(grids);
 		out.close();		
+
+		cout << "done." << endl;
 	}
 }
 
