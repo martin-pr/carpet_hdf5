@@ -223,6 +223,7 @@ int main(int argc, char* argv[]) {
 		("input", po::value<std::string>(), "input hdf5 file")
 		("dataset", po::value<std::string>(), "read a particular dataset (optional)")
 		("writevdb", po::value<std::string>(), "write a dataset selected by --dataset parameter into an openvdb file")
+		("writevdb_all", po::value<std::string>(), "write each datasets into an openvdb file in specified directory")
 	;
 
 	// process the options
@@ -242,11 +243,21 @@ int main(int argc, char* argv[]) {
 
 	H5File file(vm["input"].as<std::string>().c_str(), H5F_ACC_RDONLY );
 
-	if(!vm.count("dataset"))
+	if(vm.count("writevdb_all")) {
+		for(hsize_t i = 0; i < file.getNumObjs(); ++i) {
+			std::string type;
+			auto typeId = file.getObjTypeByIdx(i, type);
+
+			if(typeId == H5G_DATASET)
+				writevdb(file, file.getObjnameByIdx(i), file.getObjnameByIdx(i) + std::string(".vdb"));
+		}
+	}
+	else if(vm.count("dataset") && vm.count("writevdb"))
+		writevdb(file, vm["dataset"].as<std::string>(), vm["writevdb"].as<std::string>());
+	else if(!vm.count("dataset"))
 		printContent(file);
 	else if(!vm.count("writevdb"))
 		printDatasetContent(file, vm["dataset"].as<std::string>());
-	else
 		writevdb(file, vm["dataset"].as<std::string>(), vm["writevdb"].as<std::string>());
 
 	return 0;
