@@ -4,12 +4,14 @@
 #include <boost/filesystem.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/json_parser.hpp>
+#include <boost/algorithm/string/replace.hpp>
 
 #include <H5Cpp.h>
 #include <H5Location.h>
 #include <H5File.h>
 
 #include <openvdb.h>
+#include <math/Transform.h>
 
 using namespace H5;
 
@@ -62,9 +64,6 @@ namespace {
 		for(int aid = 0; aid < location.getNumAttrs(); ++aid) {
 			H5::Attribute attr = location.openAttribute(aid);
 
-			std::string value;
-			attr.read(attr.getDataType(), value);
-
 			cout << prefix << attr.getName() << " (" << translateClass(attr.getDataType().getClass()) << ", " << attr.getInMemDataSize() << ")  =  ";
 
 			if(attr.getDataType().getClass() == H5T_INTEGER)
@@ -79,9 +78,35 @@ namespace {
 		}
 	}
 
+	template<typename T>
+	struct AttrGetter {
+		static T get(const H5::H5Location& location, const std::string& attr); // generic not implemented
+	};
+
+	template<typename ELEM>
+	struct AttrGetter<std::vector<ELEM>> {
+		static std::vector<ELEM> get(const H5::H5Location& location, const std::string& attrName) {
+			H5::Attribute attr = location.openAttribute(attrName);
+
+			const unsigned count = attr.getInMemDataSize() / sizeof(ELEM);
+			const unsigned recordedCount = attr.getSpace().getSimpleExtentNpoints();
+			if(count != recordedCount) {
+				std::stringstream err;
+				err << "Error fetching attribute " << attrName << " - size based on requested datatype is " << count << ", but recorded size is " << recordedCount;
+				throw std::runtime_error(err.str());
+			}
+
+			ELEM values[count];
+			DataType type = attr.getDataType();
+			attr.read(type, (void*)values);
+
+			return std::vector<ELEM>(values, values+count);
+		}
+	};
+
 	void printDataset(const H5::DataSet& dataset, const std::string& prefix = "") {
 		DataSpace space = dataset.getSpace();
-		
+
 		cout << prefix << "type: " << translateClass(dataset.getTypeClass()) << endl;
 		cout << prefix << "attrs: " << dataset.getNumAttrs() << endl;
 		printAttributes(dataset, prefix + SPACING);
@@ -206,17 +231,42 @@ namespace {
 			vdbInitialised = true;
 		}
 
-		// and write the grid
+		// create the grid
 		openvdb::FloatGrid::Ptr grid = openvdb::FloatGrid::create();
-		openvdb::FloatGrid::Accessor accessor = grid->getAccessor();
+		// {
+		// 	// houdini hack for grid naming - Houdini has problems with many special symbols in grid name
+		// 	std::string gridName = datasetName;
+		// 	boost::replace_all(gridName, " ", "_");
+		// 	boost::replace_all(gridName, ":", "_");
+		// 	boost::replace_all(gridName, "=", "_");
+		// 	grid->setName(gridName);
+		// }
 
-		float* ptr = values;
-		for(hsize_t x = start[0]; x <= end[0]; ++x)
-			for(hsize_t y = start[1]; y <= end[1]; ++y)
-				for(hsize_t z = start[2]; z <= end[2]; ++z) {
-					openvdb::Coord xyz(x, y, z);
-					accessor.setValue(xyz, *(ptr++));
-				}
+		// transformed by the origin and delta values
+		//   based on http://www.carpetcode.org/hg/carpet/index.cgi/rev/245224d7a5ec
+		//   and http://www.openvdb.org/documentation/doxygen/classopenvdb_1_1v3__1__0_1_1math_1_1Transform.html#details
+		const std::vector<double> origin = AttrGetter<std::vector<double>>::get(ds, "origin");
+		const std::vector<double> delta = AttrGetter<std::vector<double>>::get(ds, "delta");
+
+		const openvdb::math::Transform::Ptr tr = openvdb::math::Transform::createLinearTransform(openvdb::Mat4R(
+			(float)delta[0], 0.0f, 0.0f, 0.0f,
+			0.0f, (float)delta[1], 0.0f, 0.0f,
+			0.0f, 0.0f, (float)delta[2], 0.0f,
+			(float)origin[0], (float)origin[1], (float)origin[2], 1.0f
+		));
+		grid->setTransform(tr);
+
+		// write the values to the grid
+		{
+			openvdb::FloatGrid::Accessor accessor = grid->getAccessor();
+			float* ptr = values;
+			for(hsize_t x = start[0]; x <= end[0]; ++x)
+				for(hsize_t y = start[1]; y <= end[1]; ++y)
+					for(hsize_t z = start[2]; z <= end[2]; ++z) {
+						openvdb::Coord xyz(x, y, z);
+						accessor.setValue(xyz, *(ptr++));
+					}
+		}
 
 		cout << "Writing VDB to " << filename << "..." << endl;
 
@@ -227,7 +277,7 @@ namespace {
 		grids.push_back(grid);
 		// Write out the contents of the container.
 		out.write(grids);
-		out.close();		
+		out.close();
 
 		cout << "done." << endl;
 	}
