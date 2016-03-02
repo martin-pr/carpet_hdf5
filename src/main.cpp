@@ -5,6 +5,7 @@
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/algorithm/string/replace.hpp>
+#include <boost/regex.hpp>
 
 #include <H5Cpp.h>
 #include <H5Location.h>
@@ -135,49 +136,53 @@ namespace {
 		}
 	}
 
-	void printContent(const H5::CommonFG& group, std::string prefix = "") {
+	void printContent(const H5::CommonFG& group, std::string prefix, bool printDetail, const boost::regex& datasetRegex) {
 		for(hsize_t i = 0; i < group.getNumObjs(); ++i) {
 			std::string type;
 			auto typeId = group.getObjTypeByIdx(i, type);
 
-			cout << prefix << group.getObjnameByIdx(i) << "  ->  " << type << endl;
+			if(boost::regex_match(group.getObjnameByIdx(i), datasetRegex)) {
+				cout << prefix << group.getObjnameByIdx(i) << "  ->  " << type << endl;
 
-			if(typeId == H5G_GROUP)
-				printContent(group.openGroup(group.getObjnameByIdx(i)), prefix + SPACING);
-			else if(typeId == H5G_DATASET)
-				printDataset(group.openDataSet(group.getObjnameByIdx(i)), prefix + SPACING);
+				if(typeId == H5G_GROUP)
+					printContent(group.openGroup(group.getObjnameByIdx(i)), prefix + SPACING, printDetail, datasetRegex);
+				else if(printDetail) {
+					if(typeId == H5G_DATASET)
+						printDataset(group.openDataSet(group.getObjnameByIdx(i)), prefix + SPACING);
+				}
+			}
 		}
 	}
 
 	///////////////
 
-	template<typename T>
-	void printDatasetValues(const H5::DataSet& ds) {
-		const unsigned count = ds.getInMemDataSize() / sizeof(T);
-		T values[count];
-		DataType type = ds.getDataType();
-		ds.read((void*)values, type);
+	// template<typename T>
+	// void printDatasetValues(const H5::DataSet& ds) {
+	// 	const unsigned count = ds.getInMemDataSize() / sizeof(T);
+	// 	T values[count];
+	// 	DataType type = ds.getDataType();
+	// 	ds.read((void*)values, type);
 
-		for(unsigned a=0;a<count;++a)
-			cout << values[a] << "  ";
-	}
+	// 	for(unsigned a=0;a<count;++a)
+	// 		cout << values[a] << "  ";
+	// }
 
-	void printDatasetContent(const H5File& file, const std::string datasetName) {
-		H5::DataSet ds = file.openDataSet(datasetName);
-		printDataset(ds);
+	// void printDatasetContent(const H5File& file, const std::string datasetName) {
+	// 	H5::DataSet ds = file.openDataSet(datasetName);
+	// 	printDataset(ds);
 
-		cout << endl;
+	// 	cout << endl;
 
-		if(ds.getDataType().getClass() == H5T_INTEGER)
-			printDatasetValues<int>(ds);
-		else if(ds.getDataType().getClass() == H5T_FLOAT)
-			printDatasetValues<double>(ds);
-		else
-			cout << "(print not implemented)";
-		cout << endl;
-	}
+	// 	if(ds.getDataType().getClass() == H5T_INTEGER)
+	// 		printDatasetValues<int>(ds);
+	// 	else if(ds.getDataType().getClass() == H5T_FLOAT)
+	// 		printDatasetValues<double>(ds);
+	// 	else
+	// 		cout << "(print not implemented)";
+	// 	cout << endl;
+	// }
 
-	void writevdb(const H5File& file, const std::string datasetName, const std::string& filename, bool normalize, float offset) {
+	openvdb::FloatGrid::Ptr writevdb(const H5File& file, const std::string datasetName, openvdb::io::File& out, bool normalize, float offset) {
 		H5::DataSet ds = file.openDataSet(datasetName);
 		if(ds.getDataType().getClass() != H5T_FLOAT)
 			throw std::runtime_error("OpenVDB output only supports float grids");
@@ -186,14 +191,11 @@ namespace {
 		if(space.getSimpleExtentNdims() != 3)
 			throw std::runtime_error("OpenVDB output only supports 3D grids");
 
-		space.selectAll();
-
-		hsize_t start[3];
-		hsize_t end[3];
-		space.getSelectBounds(start, end);
+		hsize_t dims[3];
+		space.getSimpleExtentDims(dims);
 
 		const unsigned count = ds.getInMemDataSize() / sizeof(float);
-		const unsigned computedSize = (end[0] - start[0] + 1) * (end[1] - start[1] + 1) * (end[2] - start[2] + 1);
+		const unsigned computedSize = (dims[0]) * (dims[1]) * (dims[2]);
 
 		if(count == 0)
 			throw std::runtime_error("Empty grid cannot be used!");
@@ -224,23 +226,17 @@ namespace {
 			for(unsigned a=0;a<count;++a)
 				values[a] += offset;
 
-		// initialise the openvdb (only once)
-		static bool vdbInitialised = false;
-		if(!vdbInitialised) {
-			openvdb::initialize();
-			vdbInitialised = true;
-		}
-
 		// create the grid
 		openvdb::FloatGrid::Ptr grid = openvdb::FloatGrid::create();
-		// {
-		// 	// houdini hack for grid naming - Houdini has problems with many special symbols in grid name
-		// 	std::string gridName = datasetName;
-		// 	boost::replace_all(gridName, " ", "_");
-		// 	boost::replace_all(gridName, ":", "_");
-		// 	boost::replace_all(gridName, "=", "_");
-		// 	grid->setName(gridName);
-		// }
+		grid->setName(datasetName);
+		{
+			// houdini hack for grid naming - Houdini has problems with many special symbols in grid name
+			std::string gridName = datasetName;
+			boost::replace_all(gridName, " ", "_");
+			boost::replace_all(gridName, ":", "_");
+			boost::replace_all(gridName, "=", "_");
+			grid->setName(gridName);
+		}
 
 		// transformed by the origin and delta values
 		//   based on http://www.carpetcode.org/hg/carpet/index.cgi/rev/245224d7a5ec
@@ -260,26 +256,15 @@ namespace {
 		{
 			openvdb::FloatGrid::Accessor accessor = grid->getAccessor();
 			float* ptr = values;
-			for(hsize_t x = start[0]; x <= end[0]; ++x)
-				for(hsize_t y = start[1]; y <= end[1]; ++y)
-					for(hsize_t z = start[2]; z <= end[2]; ++z) {
+			for(hsize_t x = 0; x < dims[0]; ++x)
+				for(hsize_t y = 0; y < dims[1]; ++y)
+					for(hsize_t z = 0; z < dims[2]; ++z) {
 						openvdb::Coord xyz(x, y, z);
 						accessor.setValue(xyz, *(ptr++));
 					}
 		}
 
-		cout << "Writing VDB to " << filename << "..." << endl;
-
-		// Create a VDB file object.
-		openvdb::io::File out(filename.c_str());
-		// Add the grid pointer to a container.
-		openvdb::GridPtrVec grids;
-		grids.push_back(grid);
-		// Write out the contents of the container.
-		out.write(grids);
-		out.close();
-
-		cout << "done." << endl;
+		return grid;
 	}
 }
 
@@ -289,9 +274,10 @@ int main(int argc, char* argv[]) {
 	desc.add_options()
 		("help", "produce help message")
 		("input", po::value<std::string>(), "input hdf5 file")
-		("dataset", po::value<std::string>(), "read a particular dataset (optional)")
-		("writevdb", po::value<std::string>(), "write a dataset selected by --dataset parameter into an openvdb file")
-		("writevdb_all", po::value<std::string>(), "write each datasets into an openvdb file in specified directory")
+		("detail", "print out details about each grid, not just names")
+		("writevdb", po::value<std::string>(), "write all datasets into an openvdb file")
+		("writevdb_explode", po::value<std::string>(), "write each datasets into an openvdb file in specified directory")
+		("dataset_regex", po::value<std::string>()->default_value(std::string(".*")), "read only datasets matching a regex (optional)")
 		("normalize", "normalize the output to be between 0 and 1")
 		("offset", po::value<float>()->default_value(0.0f), "offset the data by a given amount")
 	;
@@ -306,28 +292,59 @@ int main(int argc, char* argv[]) {
 		return 1;
 	}
 
-	if(vm.count("writevdb") && !vm.count("dataset")) {
-		cout << "--writevdb parameter used, but no --dataset specified!" << endl;
-		return 1;
-	}
+	// get the regex to match processed things
+	const boost::regex datasetRegex(vm["dataset_regex"].as<std::string>());
 
 	H5File file(vm["input"].as<std::string>().c_str(), H5F_ACC_RDONLY );
 
-	if(vm.count("writevdb_all")) {
+	if(vm.count("writevdb_explode")) {
+		openvdb::initialize();
+
 		for(hsize_t i = 0; i < file.getNumObjs(); ++i) {
 			std::string type;
 			auto typeId = file.getObjTypeByIdx(i, type);
 
-			if(typeId == H5G_DATASET)
-				writevdb(file, file.getObjnameByIdx(i), file.getObjnameByIdx(i) + std::string(".vdb"), vm.count("normalize"), vm["offset"].as<float>());
+			if((typeId == H5G_DATASET) && (boost::regex_match(file.getObjnameByIdx(i), datasetRegex))) {
+				openvdb::io::File out(file.getObjnameByIdx(i) + std::string(".vdb"));
+				openvdb::GridPtrVec grids;
+
+				// cout << "Writing grid " << file.getObjnameByIdx(i) << " to " << out.filename() << "..." << endl;
+				grids.push_back(writevdb(file, file.getObjnameByIdx(i), out, vm.count("normalize"), vm["offset"].as<float>()));
+				out.write(grids);
+				// cout << "done." << endl;
+
+				out.close();
+			}
 		}
 	}
-	else if(vm.count("dataset") && vm.count("writevdb"))
-		writevdb(file, vm["dataset"].as<std::string>(), vm["writevdb"].as<std::string>(), vm.count("normalize"), vm["offset"].as<float>());
-	else if(!vm.count("dataset"))
-		printContent(file);
-	else if(!vm.count("writevdb"))
-		printDatasetContent(file, vm["dataset"].as<std::string>());
+	else if(vm.count("writevdb")) {
+		openvdb::initialize();
+
+		openvdb::io::File out(vm["writevdb"].as<std::string>());
+		openvdb::GridPtrVec grids;
+
+		for(hsize_t i = 0; i < file.getNumObjs(); ++i) {
+			std::string type;
+			auto typeId = file.getObjTypeByIdx(i, type);
+
+			// std::vector<openvdb::FloatGrid::Ptr> dummy;
+
+			if((typeId == H5G_DATASET) && (boost::regex_match(file.getObjnameByIdx(i), datasetRegex))) {
+				cout << "Writing grid " << file.getObjnameByIdx(i) << " to " << out.filename() << "..." << endl;
+				auto tmp = writevdb(file, file.getObjnameByIdx(i), out, vm.count("normalize"), vm["offset"].as<float>());
+				// dummy.push_back(tmp);
+				grids.push_back(tmp);
+				cout << "done." << endl;
+			}
+
+		}
+
+		out.write(grids);
+		out.close();
+	}
+	else
+		printContent(file, "", vm.count("detail"), datasetRegex);
 
 	return 0;
 }
+
