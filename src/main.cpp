@@ -1,5 +1,6 @@
 #include <iostream>
 #include <vector>
+#include <functional>
 
 #include <boost/program_options.hpp>
 #include <boost/filesystem.hpp>
@@ -138,6 +139,20 @@ namespace {
 
 		return grid;
 	}
+
+	void forAllDatasets(const std::vector<std::string>& filenames, const boost::regex& datasetRegex, const std::function<void(H5File&, const std::string&)>& fn) {
+		for(auto& filename : filenames) {
+			H5File file(filename, H5F_ACC_RDONLY );
+
+			for(hsize_t i = 0; i < file.getNumObjs(); ++i) {
+				std::string type;
+				auto typeId = file.getObjTypeByIdx(i, type);
+
+				if((typeId == H5G_DATASET) && (boost::regex_match(file.getObjnameByIdx(i), datasetRegex)))
+					fn(file, file.getObjnameByIdx(i));
+			}
+		}
+	}
 }
 
 int main(int argc, char* argv[]) {
@@ -172,21 +187,14 @@ int main(int argc, char* argv[]) {
 		openvdb::io::File out(vm["writevdb"].as<std::string>());
 		openvdb::GridPtrVec grids;
 
-		for(auto& filename : vm["input"].as<std::vector<std::string>>()) {
-			H5File file(filename, H5F_ACC_RDONLY );
-
-			for(hsize_t i = 0; i < file.getNumObjs(); ++i) {
-				std::string type;
-				auto typeId = file.getObjTypeByIdx(i, type);
-
-				if((typeId == H5G_DATASET) && (boost::regex_match(file.getObjnameByIdx(i), datasetRegex))) {
-					cout << "Writing grid " << file.getObjnameByIdx(i) << " to " << out.filename() << "..." << endl;
-					auto tmp = writevdb(file, file.getObjnameByIdx(i), out, vm.count("normalize"), vm["offset"].as<float>());
-					grids.push_back(tmp);
-					cout << "done." << endl;
-				}
+		forAllDatasets(vm["input"].as<std::vector<std::string>>(), datasetRegex,
+			[&grids, &out, &vm](H5File& file, const std::string& datasetNameame) {
+				cout << "Writing grid " << datasetNameame << " to " << out.filename() << "..." << endl;
+				auto tmp = writevdb(file, datasetNameame, out, vm.count("normalize"), vm["offset"].as<float>());
+				grids.push_back(tmp);
+				cout << "done." << endl;
 			}
-		}
+		);
 
 		out.write(grids);
 		out.close();
