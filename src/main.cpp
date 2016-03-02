@@ -1,4 +1,5 @@
 #include <iostream>
+#include <vector>
 
 #include <boost/program_options.hpp>
 #include <boost/filesystem.hpp>
@@ -259,7 +260,7 @@ namespace {
 			for(hsize_t x = 0; x < dims[0]; ++x)
 				for(hsize_t y = 0; y < dims[1]; ++y)
 					for(hsize_t z = 0; z < dims[2]; ++z) {
-						openvdb::Coord xyz(x, y, z);
+						openvdb::Coord xyz(z, y, x);
 						accessor.setValue(xyz, *(ptr++));
 					}
 		}
@@ -273,10 +274,9 @@ int main(int argc, char* argv[]) {
 	po::options_description desc("Allowed options");
 	desc.add_options()
 		("help", "produce help message")
-		("input", po::value<std::string>(), "input hdf5 file")
+		("input", po::value<std::vector<std::string>>()->multitoken(), "input hdf5 file(s) - can process arbitrary number of files at the same time")
 		("detail", "print out details about each grid, not just names")
 		("writevdb", po::value<std::string>(), "write all datasets into an openvdb file")
-		("writevdb_explode", po::value<std::string>(), "write each datasets into an openvdb file in specified directory")
 		("dataset_regex", po::value<std::string>()->default_value(std::string(".*")), "read only datasets matching a regex (optional)")
 		("normalize", "normalize the output to be between 0 and 1")
 		("offset", po::value<float>()->default_value(0.0f), "offset the data by a given amount")
@@ -295,55 +295,38 @@ int main(int argc, char* argv[]) {
 	// get the regex to match processed things
 	const boost::regex datasetRegex(vm["dataset_regex"].as<std::string>());
 
-	H5File file(vm["input"].as<std::string>().c_str(), H5F_ACC_RDONLY );
-
-	if(vm.count("writevdb_explode")) {
-		openvdb::initialize();
-
-		for(hsize_t i = 0; i < file.getNumObjs(); ++i) {
-			std::string type;
-			auto typeId = file.getObjTypeByIdx(i, type);
-
-			if((typeId == H5G_DATASET) && (boost::regex_match(file.getObjnameByIdx(i), datasetRegex))) {
-				openvdb::io::File out(file.getObjnameByIdx(i) + std::string(".vdb"));
-				openvdb::GridPtrVec grids;
-
-				// cout << "Writing grid " << file.getObjnameByIdx(i) << " to " << out.filename() << "..." << endl;
-				grids.push_back(writevdb(file, file.getObjnameByIdx(i), out, vm.count("normalize"), vm["offset"].as<float>()));
-				out.write(grids);
-				// cout << "done." << endl;
-
-				out.close();
-			}
-		}
-	}
-	else if(vm.count("writevdb")) {
+	if(vm.count("writevdb")) {
 		openvdb::initialize();
 
 		openvdb::io::File out(vm["writevdb"].as<std::string>());
 		openvdb::GridPtrVec grids;
 
-		for(hsize_t i = 0; i < file.getNumObjs(); ++i) {
-			std::string type;
-			auto typeId = file.getObjTypeByIdx(i, type);
+		for(auto& filename : vm["input"].as<std::vector<std::string>>()) {
+			H5File file(filename, H5F_ACC_RDONLY );
 
-			// std::vector<openvdb::FloatGrid::Ptr> dummy;
+			for(hsize_t i = 0; i < file.getNumObjs(); ++i) {
+				std::string type;
+				auto typeId = file.getObjTypeByIdx(i, type);
 
-			if((typeId == H5G_DATASET) && (boost::regex_match(file.getObjnameByIdx(i), datasetRegex))) {
-				cout << "Writing grid " << file.getObjnameByIdx(i) << " to " << out.filename() << "..." << endl;
-				auto tmp = writevdb(file, file.getObjnameByIdx(i), out, vm.count("normalize"), vm["offset"].as<float>());
-				// dummy.push_back(tmp);
-				grids.push_back(tmp);
-				cout << "done." << endl;
+				if((typeId == H5G_DATASET) && (boost::regex_match(file.getObjnameByIdx(i), datasetRegex))) {
+					cout << "Writing grid " << file.getObjnameByIdx(i) << " to " << out.filename() << "..." << endl;
+					auto tmp = writevdb(file, file.getObjnameByIdx(i), out, vm.count("normalize"), vm["offset"].as<float>());
+					grids.push_back(tmp);
+					cout << "done." << endl;
+				}
 			}
-
 		}
 
 		out.write(grids);
 		out.close();
 	}
-	else
-		printContent(file, "", vm.count("detail"), datasetRegex);
+	else {
+		for(auto& filename : vm["input"].as<std::vector<std::string>>()) {
+			H5File file(filename, H5F_ACC_RDONLY);
+
+			printContent(file, "", vm.count("detail"), datasetRegex);
+		}
+	}
 
 	return 0;
 }

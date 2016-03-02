@@ -13,7 +13,8 @@ set(LIBS "")
 set(EXECUTABLE_OUTPUT_PATH ${PROJECT_BINARY_DIR})
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR})
 
-add_definitions(-Wall -Werror -std=c++11 -g)
+add_definitions(-Wall -std=c++11 -g)
+#add_definitions(-Wall -Werror -std=c++11 -g)
 #add_definitions(-Wall -Werror -std=c++98 -g)
 
 ###########################################################
