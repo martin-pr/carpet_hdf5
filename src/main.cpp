@@ -88,7 +88,7 @@ namespace {
 		return grid;
 	}
 
-	openvdb::FloatGrid::Ptr writevdb(const H5File& file, const std::string datasetName, openvdb::io::File& out, bool normalize, float offset) {
+	void writevdb(const H5File& file, const std::string datasetName, openvdb::FloatGrid::Ptr& grid, const std::array<double, 3>& gridOrigin, bool normalize, float offset) {
 		H5::DataSet ds = file.openDataSet(datasetName);
 		if(ds.getDataType().getClass() != H5T_FLOAT)
 			throw std::runtime_error("OpenVDB output only supports float grids");
@@ -138,8 +138,11 @@ namespace {
 		const std::array<double, 3> origin = attr_getter<std::array<double, 3>>::get(ds, "origin");
 		const std::array<double, 3> delta = attr_getter<std::array<double, 3>>::get(ds, "delta");
 
-		// create the grid
-		openvdb::FloatGrid::Ptr grid = makeGrid(datasetName, origin, delta);
+		int offsets[3];
+		for(unsigned a=0;a<3;++a) {
+			assert(gridOrigin[a] <= origin[a]);
+			offsets[a] = round((origin[a] - gridOrigin[a]) / delta[a]);
+		}
 
 		// write the values to the grid
 		openvdb::FloatGrid::Accessor accessor = grid->getAccessor();
@@ -147,11 +150,9 @@ namespace {
 		for(hsize_t x = 0; x < dims[0]; ++x)
 			for(hsize_t y = 0; y < dims[1]; ++y)
 				for(hsize_t z = 0; z < dims[2]; ++z) {
-					openvdb::Coord xyz(z, y, x);
+					openvdb::Coord xyz(z+offsets[0], y+offsets[1], x+offsets[2]);
 					accessor.setValue(xyz, *(ptr++));
 				}
-
-		return grid;
 	}
 
 	void forAllDatasets(const std::vector<std::string>& filenames, const boost::regex& datasetRegex, const std::function<void(H5File&, const std::string&)>& fn) {
@@ -167,6 +168,11 @@ namespace {
 			}
 		}
 	}
+
+	struct CollectionData {
+		std::set<std::string> datasets;
+		openvdb::FloatGrid::Ptr grid;
+	};
 }
 
 int main(int argc, char* argv[]) {
@@ -197,7 +203,7 @@ int main(int argc, char* argv[]) {
 
 	if(vm.count("writevdb")) {
 		// determine grid collections, which should be merged into a single file, eventually
-		std::vector<std::pair<grid_collection, std::set<std::string>>> collections;
+		std::vector<std::pair<grid_collection, CollectionData>> collections;
 		forAllDatasets(vm["input"].as<std::vector<std::string>>(), datasetRegex,
 			[&collections](H5File& file, const std::string& datasetName) {
 				H5::DataSet ds = file.openDataSet(datasetName);
@@ -212,7 +218,7 @@ int main(int argc, char* argv[]) {
 				const std::array<double, 3> delta = attr_getter<std::array<double, 3>>::get(ds, "delta");
 				const std::array<int, 3> iorigin = attr_getter<std::array<int, 3>>::get(ds, "iorigin");
 
-				grid_collection col(origin, delta, iorigin);
+				grid_collection col(datasetName, origin, delta, iorigin);
 
 				auto it = collections.end();
 				for(auto i = collections.begin(); i != collections.end(); ++i)
@@ -220,38 +226,53 @@ int main(int argc, char* argv[]) {
 						it = i;
 
 						i->first = i->first + col;
-						i->second.insert(datasetName);
+						i->second.datasets.insert(datasetName);
 
 						break;
 					}
 
 				if(it == collections.end())
-					collections.push_back(std::make_pair(col, std::set<std::string>{datasetName}));
+					collections.push_back(std::make_pair(col, CollectionData{std::set<std::string>{datasetName}}));
 			}
 		);
 
 		cout << "Data collections:" << endl << endl;
 		for(auto& c : collections) {
-			cout << c.first;
-			for(auto& x : c.second)
+			cout << c.first << endl;
+			for(auto& x : c.second.datasets)
 				cout << "  " << x << endl;
 		}
 
-
-
 		openvdb::initialize();
 
+		// initialise the grids in the collections set
+		for(auto& c : collections)
+			c.second.grid = makeGrid(c.first.name(), c.first.origin(), c.first.scale());
+
+		// open the output file
 		openvdb::io::File out(vm["writevdb"].as<std::string>());
-		openvdb::GridPtrVec grids;
 
 		forAllDatasets(vm["input"].as<std::vector<std::string>>(), datasetRegex,
-			[&grids, &out, &vm](H5File& file, const std::string& datasetName) {
+			[&collections, &out, &vm](H5File& file, const std::string& datasetName) {
+				// find the right collection for this grid
+				auto it = collections.end();
+				for(auto i = collections.begin(); i != collections.end(); ++i)
+					if(i->second.datasets.find(datasetName) != i->second.datasets.end()) {
+						it = i;
+						break;
+					}
+				assert(it != collections.end());
+
 				cout << "Writing grid " << datasetName << " to " << out.filename() << "..." << endl;
-				auto tmp = writevdb(file, datasetName, out, vm.count("normalize"), vm["offset"].as<float>());
-				grids.push_back(tmp);
+				writevdb(file, datasetName, it->second.grid, it->first.origin(), vm.count("normalize"), vm["offset"].as<float>());
 				cout << "done." << endl;
 			}
 		);
+
+		// make the grid vector
+		openvdb::GridPtrVec grids;
+		for(auto& c : collections)
+			grids.push_back(c.second.grid);
 
 		out.write(grids);
 		out.close();

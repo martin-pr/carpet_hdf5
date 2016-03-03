@@ -30,15 +30,15 @@ std::array<int, 3> grid_collection::iorigin() const {
 }
 
 bool grid_collection::isConsistentWith(const grid_collection& gc) const {
-	double diff = 0.0f;
-	for(unsigned a=0;a<3;++a) {
-		const double d1elem = fmod(m_origin[a], m_delta[a]) / m_delta[a];
-		const double d2elem = fmod(gc.m_origin[a], gc.m_delta[a]) / gc.m_delta[a];
+	// double diff = 0.0f;
+	// for(unsigned a=0;a<3;++a) {
+	// 	const double d1elem = fmod(m_origin[a], m_delta[a]) / m_delta[a];
+	// 	const double d2elem = fmod(gc.m_origin[a], gc.m_delta[a]) / gc.m_delta[a];
 
-		diff += abs(d1elem - d2elem);
-	}
+	// 	diff += abs(d1elem - d2elem);
+	// }
 
-	return (m_delta == gc.m_delta) && (diff < 1e-5) /*&& m_ioffsetdenom == gc.m_ioffsetdenom*/;
+	return (m_delta == gc.m_delta) /*&& (diff < 1e-5)*/ /*&& m_ioffsetdenom == gc.m_ioffsetdenom*/;
 }
 
 std::string grid_collection::name() const {
