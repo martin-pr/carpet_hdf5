@@ -1,6 +1,8 @@
 #include <iostream>
 #include <vector>
 #include <functional>
+#include <set>
+#include <utility>
 
 #include <boost/program_options.hpp>
 #include <boost/filesystem.hpp>
@@ -18,6 +20,7 @@
 
 #include "printing.h"
 #include "attr_getter.h"
+#include "grid_collection.h"
 
 using namespace H5;
 
@@ -182,15 +185,58 @@ int main(int argc, char* argv[]) {
 	const boost::regex datasetRegex(vm["dataset_regex"].as<std::string>());
 
 	if(vm.count("writevdb")) {
+		// determine grid collections, which should be merged into a single file, eventually
+		std::vector<std::pair<grid_collection, std::set<std::string>>> collections;
+		forAllDatasets(vm["input"].as<std::vector<std::string>>(), datasetRegex,
+			[&collections](H5File& file, const std::string& datasetName) {
+				H5::DataSet ds = file.openDataSet(datasetName);
+				if(ds.getDataType().getClass() != H5T_FLOAT)
+					throw std::runtime_error("OpenVDB output only supports float grids");
+
+				H5::DataSpace space = ds.getSpace();
+				if(space.getSimpleExtentNdims() != 3)
+					throw std::runtime_error("OpenVDB output only supports 3D grids");
+
+				const std::array<double, 3> origin = attr_getter<std::array<double, 3>>::get(ds, "origin");
+				const std::array<double, 3> delta = attr_getter<std::array<double, 3>>::get(ds, "delta");
+				const std::array<int, 3> iorigin = attr_getter<std::array<int, 3>>::get(ds, "iorigin");
+
+				grid_collection col(origin, delta, iorigin);
+
+				auto it = collections.end();
+				for(auto i = collections.begin(); i != collections.end(); ++i)
+					if(i->first.isConsistentWith(col)) {
+						it = i;
+
+						i->first = i->first + col;
+						i->second.insert(datasetName);
+
+						break;
+					}
+
+				if(it == collections.end())
+					collections.push_back(std::make_pair(col, std::set<std::string>{datasetName}));
+			}
+		);
+
+		cout << "Data collections:" << endl << endl;
+		for(auto& c : collections) {
+			cout << c.first;
+			for(auto& x : c.second)
+				cout << "  " << x << endl;
+		}
+
+
+
 		openvdb::initialize();
 
 		openvdb::io::File out(vm["writevdb"].as<std::string>());
 		openvdb::GridPtrVec grids;
 
 		forAllDatasets(vm["input"].as<std::vector<std::string>>(), datasetRegex,
-			[&grids, &out, &vm](H5File& file, const std::string& datasetNameame) {
-				cout << "Writing grid " << datasetNameame << " to " << out.filename() << "..." << endl;
-				auto tmp = writevdb(file, datasetNameame, out, vm.count("normalize"), vm["offset"].as<float>());
+			[&grids, &out, &vm](H5File& file, const std::string& datasetName) {
+				cout << "Writing grid " << datasetName << " to " << out.filename() << "..." << endl;
+				auto tmp = writevdb(file, datasetName, out, vm.count("normalize"), vm["offset"].as<float>());
 				grids.push_back(tmp);
 				cout << "done." << endl;
 			}
