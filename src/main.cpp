@@ -58,6 +58,36 @@ namespace {
 	// 	cout << endl;
 	// }
 
+	std::string houdiniName(const std::string& in) {
+		// houdini hack for grid naming - Houdini has problems with many special symbols in grid name
+		std::string gridName = in;
+		boost::replace_all(gridName, " ", "_");
+		boost::replace_all(gridName, ":", "_");
+		boost::replace_all(gridName, "=", "_");
+
+		return gridName;
+	}
+
+	openvdb::FloatGrid::Ptr makeGrid(const std::string& name, const std::array<double, 3>& origin, const std::array<double, 3>& delta) {
+		// create the grid
+		openvdb::FloatGrid::Ptr grid = openvdb::FloatGrid::create();
+		// houdini hack for grid naming - Houdini has problems with many special symbols in grid name
+		grid->setName(houdiniName(name));
+
+		// transformed by the origin and delta values
+		//   based on http://www.carpetcode.org/hg/carpet/index.cgi/rev/245224d7a5ec
+		//   and http://www.openvdb.org/documentation/doxygen/classopenvdb_1_1v3__1__0_1_1math_1_1Transform.html#details
+		const openvdb::math::Transform::Ptr tr = openvdb::math::Transform::createLinearTransform(openvdb::Mat4R(
+			(float)delta[0], 0.0f, 0.0f, 0.0f,
+			0.0f, (float)delta[1], 0.0f, 0.0f,
+			0.0f, 0.0f, (float)delta[2], 0.0f,
+			(float)origin[0], (float)origin[1], (float)origin[2], 1.0f
+		));
+		grid->setTransform(tr);
+
+		return grid;
+	}
+
 	openvdb::FloatGrid::Ptr writevdb(const H5File& file, const std::string datasetName, openvdb::io::File& out, bool normalize, float offset) {
 		H5::DataSet ds = file.openDataSet(datasetName);
 		if(ds.getDataType().getClass() != H5T_FLOAT)
@@ -102,43 +132,24 @@ namespace {
 			for(unsigned a=0;a<count;++a)
 				values[a] += offset;
 
-		// create the grid
-		openvdb::FloatGrid::Ptr grid = openvdb::FloatGrid::create();
-		grid->setName(datasetName);
-		{
-			// houdini hack for grid naming - Houdini has problems with many special symbols in grid name
-			std::string gridName = datasetName;
-			boost::replace_all(gridName, " ", "_");
-			boost::replace_all(gridName, ":", "_");
-			boost::replace_all(gridName, "=", "_");
-			grid->setName(gridName);
-		}
-
 		// transformed by the origin and delta values
 		//   based on http://www.carpetcode.org/hg/carpet/index.cgi/rev/245224d7a5ec
 		//   and http://www.openvdb.org/documentation/doxygen/classopenvdb_1_1v3__1__0_1_1math_1_1Transform.html#details
-		const std::vector<double> origin = attr_getter<std::vector<double>>::get(ds, "origin");
-		const std::vector<double> delta = attr_getter<std::vector<double>>::get(ds, "delta");
+		const std::array<double, 3> origin = attr_getter<std::array<double, 3>>::get(ds, "origin");
+		const std::array<double, 3> delta = attr_getter<std::array<double, 3>>::get(ds, "delta");
 
-		const openvdb::math::Transform::Ptr tr = openvdb::math::Transform::createLinearTransform(openvdb::Mat4R(
-			(float)delta[0], 0.0f, 0.0f, 0.0f,
-			0.0f, (float)delta[1], 0.0f, 0.0f,
-			0.0f, 0.0f, (float)delta[2], 0.0f,
-			(float)origin[0], (float)origin[1], (float)origin[2], 1.0f
-		));
-		grid->setTransform(tr);
+		// create the grid
+		openvdb::FloatGrid::Ptr grid = makeGrid(datasetName, origin, delta);
 
 		// write the values to the grid
-		{
-			openvdb::FloatGrid::Accessor accessor = grid->getAccessor();
-			float* ptr = values;
-			for(hsize_t x = 0; x < dims[0]; ++x)
-				for(hsize_t y = 0; y < dims[1]; ++y)
-					for(hsize_t z = 0; z < dims[2]; ++z) {
-						openvdb::Coord xyz(z, y, x);
-						accessor.setValue(xyz, *(ptr++));
-					}
-		}
+		openvdb::FloatGrid::Accessor accessor = grid->getAccessor();
+		float* ptr = values;
+		for(hsize_t x = 0; x < dims[0]; ++x)
+			for(hsize_t y = 0; y < dims[1]; ++y)
+				for(hsize_t z = 0; z < dims[2]; ++z) {
+					openvdb::Coord xyz(z, y, x);
+					accessor.setValue(xyz, *(ptr++));
+				}
 
 		return grid;
 	}
